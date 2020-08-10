@@ -5,12 +5,14 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/dghubble/go-twitter/twitter"
 	"github.com/dghubble/oauth1"
 	"github.com/michaeloverton/waterbot/internal/env"
 	"github.com/michaeloverton/waterbot/internal/esp"
+	"github.com/michaeloverton/waterbot/internal/throttle"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
@@ -39,18 +41,42 @@ func main() {
 	demux.Tweet = func(tweet *twitter.Tweet) {
 		log.Info(tweet.Text)
 
-		// Water the plants.
-		if err := espClient.Water(context.Background()); err != nil {
-			log.Error(errors.Wrap(err, "failed to water plants"))
-			if err := reply(twitterClient, tweet, "i failed"); err != nil {
-				log.Error(errors.Wrap(err, "failed to reply upon watering failure"))
-			}
+		screenName := tweet.User.ScreenName
+
+		if strings.Contains(tweet.Text, "blast the cache") {
+			log.Infof("%s reset the cache", screenName)
+			throttle.ResetCache()
 			return
 		}
 
-		// Indicate watering success.
-		if err := reply(twitterClient, tweet, "thirst quenched"); err != nil {
-			log.Error(errors.Wrap(err, "failed to reply upon watering success"))
+		// If user can water, do it and say so.
+		if throttle.UserCanWater(screenName) {
+			// Water the plants.
+			if err := espClient.Water(context.Background()); err != nil {
+				log.Error(errors.Wrap(err, "failed to water plants"))
+				if err := reply(twitterClient, tweet, "i failed"); err != nil {
+					log.Error(errors.Wrap(err, "failed to reply upon watering failure"))
+				}
+				return
+			}
+
+			// Indicate watering success.
+			if err := reply(twitterClient, tweet, "thirst quenched"); err != nil {
+				log.Error(errors.Wrap(err, "failed to reply upon watering success"))
+				return
+			}
+
+			// Update the user cache.
+			throttle.UpdateCache(screenName)
+
+			return
+		}
+
+		log.Infof("throttled user: %s. total waters: %d", screenName, throttle.GetUser(screenName).TotalWaters)
+
+		// Otherwise, yell at user.
+		if err := reply(twitterClient, tweet, "who do you think you are? you've had your fun"); err != nil {
+			log.Error(errors.Wrap(err, "failed to reply upon watering disallow"))
 			return
 		}
 	}
@@ -80,6 +106,11 @@ func main() {
 }
 
 func reply(twitterClient *twitter.Client, tweet *twitter.Tweet, reply string) error {
+	// Don't let bot reply to itself.
+	if tweet.User.ScreenName == "thirstyplantss" {
+		return nil
+	}
+
 	_, _, err := twitterClient.Statuses.Update(
 		fmt.Sprintf("@%s %s", tweet.User.ScreenName, reply),
 		&twitter.StatusUpdateParams{
