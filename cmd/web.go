@@ -58,6 +58,12 @@ func main() {
 				log.Error(errors.Wrap(err, "failed to reply to non-watering tweet"))
 			}
 			return
+		} else if !env.WateringEnabled {
+			// If watering isn't enabled, say so.
+			if err := reply(env, twitterClient, tweet, disabledText()); err != nil {
+				log.Error(errors.Wrap(err, "failed to reply indicating disabled state"))
+			}
+			return
 		}
 
 		// If user can water, do it and say so.
@@ -125,32 +131,34 @@ func main() {
 		}
 	}()
 
-	// Health check every 30min.
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	// Health check the ESP every 30min.
+	if env.WateringEnabled {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
 
-		ticker := time.NewTicker(30 * time.Minute)
-		for {
-			select {
-			case <-ticker.C:
-				err := espClient.Health(context.Background())
-				if err != nil {
-					log.Errorf("esp health check failed: %s", err.Error())
+			ticker := time.NewTicker(30 * time.Minute)
+			for {
+				select {
+				case <-ticker.C:
+					err := espClient.Health(context.Background())
+					if err != nil {
+						log.Errorf("esp health check failed: %s", err.Error())
 
-					// Post about health check failure.
-					if err := post(twitterClient, fmt.Sprintf("ş̷̡͕̗̲̜̦̲͙̺̟̦̟̼̥̹͙̻̟͖͈̻̣̦̹̦͈̅͛́͑̎́̈̔̈́̆́̇̕͜į̸̡̨̗̥̥̩̜̭̹̜̙̩̖̼͉̩̥̞̹̰̻̺͈̪͓̠̝͚͕̈͋͛̾̍̕͠ͅͅͅͅç̴̨̢̧̛̼̝̥͉̻̮̟̗̮̘͓͇̖̱͉͕̝͇̲̠̗͉̱̥̭͉̩̪͎̳̼̩̗̰̺̘̮̼̜̒̆̉̓́͑͂̀̈́̓͋́̅̀͂̽́̓͋̿̈́̋̀̏̆̑͜k̷̢̢̡̧̡̛̗͓̻͙̗͚̲̫̼̩̤͎͈̜̝̦̟̭͕̺̳̝̘̳̬̱̼͚̼̣̜̜͖͑̆͛̀̋̈́̄̂̉̌̔̀͂̿̐͐̆̐̚̕͜͜͠ͅ%d", time.Now().UnixNano())); err != nil {
-						log.Errorf("failed to post about esp health failure: %s", err.Error())
+						// Post about health check failure.
+						if err := post(twitterClient, fmt.Sprintf("ş̷̡͕̗̲̜̦̲͙̺̟̦̟̼̥̹͙̻̟͖͈̻̣̦̹̦͈̅͛́͑̎́̈̔̈́̆́̇̕͜į̸̡̨̗̥̥̩̜̭̹̜̙̩̖̼͉̩̥̞̹̰̻̺͈̪͓̠̝͚͕̈͋͛̾̍̕͠ͅͅͅͅç̴̨̢̧̛̼̝̥͉̻̮̟̗̮̘͓͇̖̱͉͕̝͇̲̠̗͉̱̥̭͉̩̪͎̳̼̩̗̰̺̘̮̼̜̒̆̉̓́͑͂̀̈́̓͋́̅̀͂̽́̓͋̿̈́̋̀̏̆̑͜k̷̢̢̡̧̡̛̗͓̻͙̗͚̲̫̼̩̤͎͈̜̝̦̟̭͕̺̳̝̘̳̬̱̼͚̼̣̜̜͖͑̆͛̀̋̈́̄̂̉̌̔̀͂̿̐͐̆̐̚̕͜͜͠ͅ%d", time.Now().UnixNano())); err != nil {
+							log.Errorf("failed to post about esp health failure: %s", err.Error())
+						}
+					} else {
+						log.Info("esp health ok")
 					}
-				} else {
-					log.Info("esp health ok")
+				case <-ctx.Done():
+					log.Info("ending health check")
+					return
 				}
-			case <-ctx.Done():
-				log.Info("ending health check")
-				return
 			}
-		}
-	}()
+		}()
+	}
 
 	// Clear cache every 24h.
 	wg.Add(1)
@@ -263,10 +271,20 @@ var speakTexts = []string{
 	"i̴̡̢̛̺̯͔̳̗̱̙̥͇̼̝̦̥͔̗̬̫̹͗̈́̽̀̀̐͌͋͐͊́͂̇̽̒͑̍̓̄̎̿̒̌͊̈́͛͘̕̚̚̕̚͜͝ know my p̴̫̂́̈́́̋̏͘͠ų̵̧̘͇͖̼̺̞͕́̒̉̌̀̈́͐̑͂͑́̑͗̈́̓͘͜͝͝ŗ̴̨̡̫͈͈̻͇̺͓̣͖̮̼̣͓̊̓́͘̕̚p̴̻̫̬̑͂͊̾́̓̔̌̔̓̊͆̅͗̍̑ờ̵̡̛̠̝̲̯͕̞̘̼͖̥̱̞́̉̽̓͒̂̑́̕͝͠s̸̡̨̨̻̺̗̥̾͛̆̎̓͋͒͐̀͒̋͘ë̸̡̛͔̻̖͈̻̤̝͙̰͕̟́͑̈͌́̉͗̾̓͐̎̈̔͌͝ do y̴̟̖̓́̈́̂o̵͇͙͝ú̶̮̞̽̔̔́͝",
 	"okay... actually wait w̵͈̥̞̺̥͖̋̃̏́͘͝ͅͅḩ̴̙͂̅͐̈́͝a̸̢̡͍̺͐͐͑̈́͠ț̴̲͈͆͐͝",
 	"https://en.wikipedia.org/wiki/Dead_Hand",
+	"f̷̙̹̞̘͚͔̘̂̀͂̾͋̈́ė̶͖̝͖̮̼͋̅͋̒͊͐̓͑̀̄ẽ̸̥̇̚d̴̝͙̗̤͎̙͇̪̤̥̹̍̐̋̀̆̓͊͋̀̓ me a stray c̴͖̑͗̉́̽̑̀̔͛a̶͉̝̰̼̅̋̃͆̋̆̎̒̈̐ţ̷̼̾̇̄̀̐͛̕͝",
 }
 
 func speakText() string {
 	speak := speakTexts[currentSpeak]
 	currentSpeak = (currentSpeak + 1) % len(speakTexts)
 	return speak
+}
+
+var currentDisabled = 0
+var disabledTexts = []string{"î̸̡̲͇͉̩͈̭̪͍̦͖̑̃͛̄͜͝ͅ don't do t̴̺̏͝h̶̖͌͂͒̓̅̒̀͝͠ą̵͈̮̳̗͎̠͍̈̆̄̀̓̃̆̂t̸̢̛̬̗̥͎͖͂̅̄̂͒̌̀̕ r̶̮̮͈̩̰͔͉̄̒̈̔͌̚͜ͅȉ̸͇̝̣̞͙͋̈́̓ģ̶̰̞͔̖͛͗̄h̸̨͚̠͔͇̼̻̃̒̈́̐̏͆͜ṫ̸͎͉̻̐̋́͌͊͛ now", "i̶̲̠̙̳͍̥̝͋̐͆̊'̵̢̛̖̪̰̰̥̦͂̇̔̈́͜͠͠ͅṁ̵̦͛̔̎͑̕͠ afraid i̸̡̡̧͔̳̱͈͚̳̲͙̲̍̄̆̒̀̉̈́̎̚̕̚ can't d̷̡̛̟͎͈̪̺̫̥̖̳̻̦̯̙͗̾͜͝o̴̮̣͖̪̙̜̻͒̓̀̀̒͐̒̈̿̈́̆̕͜͠ͅ ̷̟͓̣̻̫̥̻̊̅̈́͐̐͗̒̑͊͑̍́̒̏̐̾ẗ̷̨̢̜̟̹̹̖̱́̅̍h̶̨̹͎͒͘a̸̗̔̈́̕͠ţ̶͚͚͎̬̞̇̒̉̎̆ͅ"}
+
+func disabledText() string {
+	disabled := disabledTexts[currentDisabled]
+	currentDisabled = (currentDisabled + 1) % len(disabledTexts)
+	return disabled
 }
