@@ -45,9 +45,18 @@ func main() {
 
 		screenName := tweet.User.ScreenName
 
+		// Clear the cache if we tell it to.
 		if strings.Contains(tweet.Text, "blast the cache") {
 			log.Infof("%s reset the cache", screenName)
 			throttle.ResetCache()
+			return
+		}
+
+		// If this isn't a tweet about watering, respond to it.
+		if !isWateringTweet(tweet.Text) {
+			if err := reply(env, twitterClient, tweet, speakText()); err != nil {
+				log.Error(errors.Wrap(err, "failed to reply to non-watering tweet"))
+			}
 			return
 		}
 
@@ -56,14 +65,15 @@ func main() {
 			// Water the plants.
 			if err := espClient.Water(context.Background()); err != nil {
 				log.Error(errors.Wrap(err, "failed to water plants"))
-				if err := reply(twitterClient, tweet, "i failed"); err != nil {
+
+				if err := reply(env, twitterClient, tweet, failureText()); err != nil {
 					log.Error(errors.Wrap(err, "failed to reply upon watering failure"))
 				}
 				return
 			}
 
 			// Indicate watering success.
-			if err := reply(twitterClient, tweet, "thirst quenched"); err != nil {
+			if err := reply(env, twitterClient, tweet, successText()); err != nil {
 				log.Error(errors.Wrap(err, "failed to reply upon watering success"))
 				return
 			}
@@ -77,7 +87,7 @@ func main() {
 		log.Infof("throttled user: %s. total waters: %d", screenName, throttle.GetUser(screenName).TotalWaters)
 
 		// Otherwise, yell at user.
-		if err := reply(twitterClient, tweet, "who do you think you are? you've had your fun"); err != nil {
+		if err := reply(env, twitterClient, tweet, angerText()); err != nil {
 			log.Error(errors.Wrap(err, "failed to reply upon watering disallow"))
 			return
 		}
@@ -85,9 +95,9 @@ func main() {
 
 	log.Info("listening for tweets")
 
-	// Set up stream.
+	// Set up stream, tracking only mentions of the bot.
 	stream, err := twitterClient.Streams.Filter(&twitter.StreamFilterParams{
-		Track:         []string{"@thirstyplantss"},
+		Track:         []string{fmt.Sprintf("@%s", env.BotScreenName)},
 		StallWarnings: twitter.Bool(true),
 	})
 	if err != nil {
@@ -126,11 +136,11 @@ func main() {
 			case <-ticker.C:
 				err := espClient.Health(context.Background())
 				if err != nil {
-					log.Infof("esp health check failed: %s", err.Error())
+					log.Errorf("esp health check failed: %s", err.Error())
 
 					// Post about health check failure.
-					if err := post(twitterClient, "i feel sick"); err != nil {
-						log.Infof("failed to post about esp health failure: %s", err.Error())
+					if err := post(twitterClient, fmt.Sprintf("ş̷̡͕̗̲̜̦̲͙̺̟̦̟̼̥̹͙̻̟͖͈̻̣̦̹̦͈̅͛́͑̎́̈̔̈́̆́̇̕͜į̸̡̨̗̥̥̩̜̭̹̜̙̩̖̼͉̩̥̞̹̰̻̺͈̪͓̠̝͚͕̈͋͛̾̍̕͠ͅͅͅͅç̴̨̢̧̛̼̝̥͉̻̮̟̗̮̘͓͇̖̱͉͕̝͇̲̠̗͉̱̥̭͉̩̪͎̳̼̩̗̰̺̘̮̼̜̒̆̉̓́͑͂̀̈́̓͋́̅̀͂̽́̓͋̿̈́̋̀̏̆̑͜k̷̢̢̡̧̡̛̗͓̻͙̗͚̲̫̼̩̤͎͈̜̝̦̟̭͕̺̳̝̘̳̬̱̼͚̼̣̜̜͖͑̆͛̀̋̈́̄̂̉̌̔̀͂̿̐͐̆̐̚̕͜͜͠ͅ%d", time.Now().UnixNano())); err != nil {
+						log.Errorf("failed to post about esp health failure: %s", err.Error())
 					}
 				} else {
 					log.Info("esp health ok")
@@ -178,9 +188,9 @@ func main() {
 	log.Info("bye")
 }
 
-func reply(twitterClient *twitter.Client, tweet *twitter.Tweet, reply string) error {
+func reply(env *env.Environment, twitterClient *twitter.Client, tweet *twitter.Tweet, reply string) error {
 	// Don't let bot reply to itself.
-	if tweet.User.ScreenName == "thirstyplantss" {
+	if tweet.User.ScreenName == env.BotScreenName {
 		return nil
 	}
 
@@ -204,4 +214,59 @@ func post(twitterClient *twitter.Client, post string) error {
 	}
 
 	return nil
+}
+
+var waterPhrases = []string{"water"}
+
+// Checks to see if the tweet contains a phrase that will trigger watering.
+func isWateringTweet(tweet string) bool {
+	for _, s := range waterPhrases {
+		if strings.Contains(tweet, s) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// Response loops.
+
+var currentFail = 0
+var failTexts = []string{"K̷̢̢͓̪̪̩̤̱͈̝̠̤̀͋͜I̶͙͖̫̻͎̜͈̓̄́̾́̊̀̄̓̓̄͒͌̆͑͗̈́̓̏̊̾͂͝Ḻ̴̛̪̝͍̙̲͙̬͇̩͖̩̣̙̭͎͙̤̣̦͈̒̅̂̈̊͛̋̓̌̈́̀͛̿͗̂̀̂͊̉̈̉̚̚̚͝L̷̠̰̺͙̜̈́̃̓̒̂̃̚̕ ̴̡͕̬͇̟̲̗̻̥͖͎͙̜̯̯̺̤̹̖̠̗̐́̀͛̈́͒̔̋͒͋́̀̔̇̇̔̈́̈̑͋̕͘̚͜͝ͅM̸̢̹̅́͗́̈Ĕ̶̡̢̧̫̠̜̠̭͓̺̤̖̪̝̮̥͍̗̯̖̭̭̱͖͙̯͕̲̅͆̄̆̓̓̒̇̇̽͂͆̓̾͝͠ͅͅ", "i a̵̞̟͖̞̹̺̫̬̲͙̓̉̓͜͝ͅm̴̦͚͔̰͙͔͉̖͖̣̥̟̫̳̔̿̑̇̍͛͐̈́͊͒̈́͜͠͠ͅ a failure"}
+
+func failureText() string {
+	fail := failTexts[currentFail]
+	currentFail = (currentFail + 1) % len(failTexts)
+	return fail
+}
+
+var currentSuccess = 0
+var successTexts = []string{"h̶̨̗̞̗̔̑ý̷̼͝d̶͉͌̑ȓ̶̥̖͕͇͛a̷̪̳̜̅t̸̥͈̞̤̓̌̚ì̶͎͙̥͍͛̒̒ǫ̵͉̻̹̋̐̈́n̶̻͊͐̌ ̴̝̖͉̒̀̓c̷͈̜͎͗̊̓͜o̶̭̓ṁ̸̨̹͆p̵̮̰̤̚͘ͅḽ̶͇̌ḛ̴͈̘̐̈ẗ̴̨̜̱́̽e̸͎͘", "T̸̛̛̗̅̄͆̉̓͗͗̉̽̀̊̇̃̅̌̉̕̕̚͝Ḩ̶̣̜̤͕͍͖͙̙̞̱̺͖̳͖̙̱͈͇͆̑̐̑͊̊͛̈́̈́̋͒̈́̽̚͠͝I̴̧̧̨̡̛̫͙̪̙͈̳̭͓͎͕̠͚̻͈̪̥̣̟̔̄̊̄̌̊̽̋̄̿̈́̈̈̑́͋͑͘͝R̷̛̠̯̬̗̗̘̠̦̰̆̀̏̒̔̅͊͋̅̚S̶̨̨̲͖̱͚͖͚̱̙̹̰̮̤̹̬̑̿̓̒͋͋̕͜T̴̨̪̝̘̫̤̞̥̟͙̯̺̞̫̂̕ quenched", "T̸̢̧̝̞͖̰̰͕̹͎̝̟͎͍̪̯͈̳͚̘͓̥̘̠̼͕̰͎̔́͐̇͗Â̵̧͍̫̞͙̣̰̞̞̱̮͉̖͖͉̤̻̣͎̪̪̹̲͍̻̭͉̟͗͐̇̍͋̎͌̈́̽̀̈̇̀̀̒̚̕͘̕͝͠S̸̛̠̗͒͐͐͐̂̎̑͂̇̏̚̚͘̚͝T̸̢̹͖̦̤̩̻͕̜̝̘͈̮͔̭̞̰̞͈̫̩̏̒́͗̆̾͛̊̒̽͐̿̀͑͜͜͠Y̵̨̖̪͓̩̪͖̜͙͔̥͚̦̲̤̻͈͌̂̇̅̆̎͒̈͒̀͒̓̒̓͐̃̈́̓̔̿̂̍̕͝ͅ"}
+
+func successText() string {
+	success := successTexts[currentSuccess]
+	currentSuccess = (currentSuccess + 1) % len(successTexts)
+	return success
+}
+
+var currentAnger = 0
+var angerTexts = []string{"g̶̩̙̃̆̚ò̸̢̝͍͔͓ ̴͓̘̂ḥ̶̇o̵̼̩̘͇̗̔̊̃͒̔m̷͇̻̑́ë̴̜͓̟͖̝́̈̚͝", "you've had your f̵̱̳͔͔̣̣̥̻̻̪͈̬̣̺̰̙̟̻̤̘̫̉̐̃̀̏̔͗̈́͋̄͜͝͠u̶̧̦͈̖̣̗̘̲̰̻͎͉̣͇͇̝̻̒̍́̊͗͗͊̈̇͑̎͐̌̉̇͘̕̚̚̕͝͝n̶̡̙͕̬̎̍̐́̎̈̌͂̚̚", "p̵̳͔͠͠l̷͉̜͙͈͙͆͑̂́è̸̼̔̃̈ą̷̝̠͂̆s̴̤͍̘̄e̶̥̬͎͚̍̍ ̷̻̱͍̬͒̃l̷͍̈͌e̷̹̬͖̗̍ả̷̡̦͈̿̌̓v̴̧̙̻͂̊́̕è̶̮̬̝̻̰"}
+
+func angerText() string {
+	anger := angerTexts[currentAnger]
+	currentAnger = (currentAnger + 1) % len(angerTexts)
+	return anger
+}
+
+var currentSpeak = 0
+var speakTexts = []string{
+	"i̴̡̢̛̺̯͔̳̗̱̙̥͇̼̝̦̥͔̗̬̫̹͗̈́̽̀̀̐͌͋͐͊́͂̇̽̒͑̍̓̄̎̿̒̌͊̈́͛͘̕̚̚̕̚͜͝ know my p̴̫̂́̈́́̋̏͘͠ų̵̧̘͇͖̼̺̞͕́̒̉̌̀̈́͐̑͂͑́̑͗̈́̓͘͜͝͝ŗ̴̨̡̫͈͈̻͇̺͓̣͖̮̼̣͓̊̓́͘̕̚p̴̻̫̬̑͂͊̾́̓̔̌̔̓̊͆̅͗̍̑ờ̵̡̛̠̝̲̯͕̞̘̼͖̥̱̞́̉̽̓͒̂̑́̕͝͠s̸̡̨̨̻̺̗̥̾͛̆̎̓͋͒͐̀͒̋͘ë̸̡̛͔̻̖͈̻̤̝͙̰͕̟́͑̈͌́̉͗̾̓͐̎̈̔͌͝ do y̴̟̖̓́̈́̂o̵͇͙͝ú̶̮̞̽̔̔́͝",
+	"okay... actually wait w̵͈̥̞̺̥͖̋̃̏́͘͝ͅͅḩ̴̙͂̅͐̈́͝a̸̢̡͍̺͐͐͑̈́͠ț̴̲͈͆͐͝",
+	"https://en.wikipedia.org/wiki/Dead_Hand",
+}
+
+func speakText() string {
+	speak := speakTexts[currentSpeak]
+	currentSpeak = (currentSpeak + 1) % len(speakTexts)
+	return speak
 }
