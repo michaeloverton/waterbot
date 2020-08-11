@@ -6,7 +6,9 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
+	"time"
 
 	"github.com/dghubble/go-twitter/twitter"
 	"github.com/dghubble/oauth1"
@@ -85,24 +87,95 @@ func main() {
 
 	// Set up stream.
 	stream, err := twitterClient.Streams.Filter(&twitter.StreamFilterParams{
-		Track: []string{"@thirstyplantss"},
-		// Follow:        []string{"halloumi_mane", "766041800"},
+		Track:         []string{"@thirstyplantss"},
 		StallWarnings: twitter.Bool(true),
 	})
 	if err != nil {
 		log.Fatal(err)
 	}
+	defer stream.Stop()
 
-	// Receive messages until stopped or stream quits
-	go demux.HandleChan(stream.Messages)
+	// For synchronizing quitting of goroutines.
+	var wg sync.WaitGroup
+	ctx, cancel := context.WithCancel(context.Background())
 
-	// Wait for SIGINT and SIGTERM (HIT CTRL-C)
-	ch := make(chan os.Signal)
-	signal.Notify(ch, syscall.SIGINT, syscall.SIGTERM)
-	log.Println(<-ch)
+	// Receive messages until quit or stream exits.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
 
+		for {
+			select {
+			case m := <-stream.Messages:
+				demux.Handle(m)
+			case <-ctx.Done():
+				log.Info("ending stream")
+				return
+			}
+		}
+	}()
+
+	// Health check every 30min.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+
+		ticker := time.NewTicker(30 * time.Minute)
+		for {
+			select {
+			case <-ticker.C:
+				err := espClient.Health(context.Background())
+				if err != nil {
+					log.Infof("esp health check failed: %s", err.Error())
+
+					// Post about health check failure.
+					if err := post(twitterClient, "i feel sick"); err != nil {
+						log.Infof("failed to post about esp health failure: %s", err.Error())
+					}
+				} else {
+					log.Info("esp health ok")
+				}
+			case <-ctx.Done():
+				log.Info("ending health check")
+				return
+			}
+		}
+	}()
+
+	// Clear cache every 24h.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+
+		ticker := time.NewTicker(24 * time.Hour)
+		for {
+			select {
+			case <-ticker.C:
+				log.Info("resetting cache after 24h")
+				throttle.ResetCache()
+			case <-ctx.Done():
+				log.Info("ending cache blaster")
+				return
+			}
+		}
+	}()
+
+	// Detect system cancel signals.
+	go func() {
+		signals := make(chan os.Signal)
+		defer close(signals)
+
+		signal.Notify(signals, syscall.SIGQUIT, syscall.SIGTERM, os.Interrupt)
+		defer signal.Stop(signals)
+
+		signal := <-signals
+		log.Infof("signal received: %s \n", signal.String())
+		cancel()
+	}()
+
+	// Wait for gouroutines to return.
+	wg.Wait()
 	log.Info("bye")
-	stream.Stop()
 }
 
 func reply(twitterClient *twitter.Client, tweet *twitter.Tweet, reply string) error {
@@ -117,6 +190,15 @@ func reply(twitterClient *twitter.Client, tweet *twitter.Tweet, reply string) er
 			InReplyToStatusID: tweet.ID,
 		},
 	)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func post(twitterClient *twitter.Client, post string) error {
+	_, _, err := twitterClient.Statuses.Update(post, nil)
 	if err != nil {
 		return err
 	}

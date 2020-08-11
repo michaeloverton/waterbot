@@ -1,6 +1,8 @@
 package throttle
 
-import "time"
+import (
+	"time"
+)
 
 var cache = map[string]User{}
 

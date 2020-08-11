@@ -17,6 +17,7 @@ type espClient struct {
 
 // Client is used to find weddings by memberID.
 type Client interface {
+	Health(ctx context.Context) error
 	Water(ctx context.Context) error
 	Blink(ctx context.Context) error
 }
@@ -64,6 +65,25 @@ func (ec *espClient) Blink(ctx context.Context) error {
 	res, err := ec.HTTPClient.Do(req)
 	if err != nil {
 		return errors.Wrap(err, "blink request failed")
+	}
+	defer res.Body.Close()
+
+	if res.StatusCode != 200 {
+		return fmt.Errorf("non-200 status: %d", res.StatusCode)
+	}
+
+	return nil
+}
+
+func (ec *espClient) Health(ctx context.Context) error {
+	req, err := http.NewRequest("GET", fmt.Sprintf("%s/health", ec.BaseURL), nil)
+	if err != nil {
+		return errors.Wrap(err, "failed to create health request")
+	}
+
+	res, err := ec.HTTPClient.Do(req)
+	if err != nil {
+		return errors.Wrap(err, "health request failed")
 	}
 	defer res.Body.Close()
 
